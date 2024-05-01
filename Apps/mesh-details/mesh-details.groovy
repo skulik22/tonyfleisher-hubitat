@@ -1515,8 +1515,10 @@ function buildNeighborsLists(fullnameMap, nodeData) {
 						neighborsMap.set(devId, [])
 					}
 					n = neighborsMap.get(devId)
-					n.push(neighborId)
-
+ 				        if( neighborId == 1 || neighborId >= 10 ) { 
+					     	n.push(neighborId)
+					}	
+     
 					if (!neighborsMapReverse.has(neighborId)) {
 						neighborsMapReverse.set(neighborId, [])
 					}
