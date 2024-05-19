@@ -22,8 +22,8 @@ definition(
 
 
 /**********************************************************************************************************************************************/
-private releaseVer() { return "0.7.26.5-beta" }
-private appVerDate() { return "2023-12-16" }
+private releaseVer() { return "0.8.27.3-beta" }
+private appVerDate() { return "2024-05-19" }
 /**********************************************************************************************************************************************/
 preferences {
 	page name: "mainPage"
@@ -616,6 +616,10 @@ async function getZWaveDeviceIds() {
 	}
 	console.log("Collecting zwave device ids")
 	var deviceIds = devList.reduce( (acc, val) => {
+		if (acc.includes(val.hubDeviceId)) {
+			console.log(`DUPLICATE device in ZwaveListing: \${val.hubDeviceId}`);
+			return acc;
+		}
 		if (val.hubDeviceId) {
 			acc.push(val.hubDeviceId); 
 		}
@@ -694,9 +698,28 @@ function collectZwaveList(zwaveDetailsJson) {
 
 	var zwNodes = zwaveDetailsJson.nodes;
 	var zwDevices = zwaveDetailsJson.zwDevices;
+	var seenLR = false;
+	var seenNodes = [];
 
 	return zwNodes.map ( node => {
-		var zwDevice = zwDevices[node.nodeId]; // This will be null/undefined if there is no assigned device
+		var nodeId = node.nodeId;
+		var isLR = nodeId > 255 ? true : false;
+		if (seenNodes.includes(nodeId)) {
+			console.log(`IGNORE DUPLIACTE: \${nodeId}`);
+			return null;
+		} else {
+			seenNodes.push(nodeId);
+		}
+		if ($enableDebug && isLR) {
+			console.log(`collectZwaveList: LR Device found: \${JSON.stringify(node)}`)
+		}
+
+		// if ($enableDebug) {
+		// 	console.log(`collectZwaveList: device: \${nodeId}`)
+		// }
+
+		if (nodeId > 255) { seenLR = true}
+		var zwDevice = zwDevices[nodeId]; // This will be null/undefined if there is no assigned device
 		if (!zwDevice) {
 			zwDevice = getZWDevicePlaceholder(node)
 		}
@@ -726,19 +749,19 @@ function collectZwaveList(zwaveDetailsJson) {
 			"PER": node.per,
 			"RTT Avg": rtt,
 			"LWR RSSI": lwr,
-			"Neighbors": node.neighbors,
-			"Route Changes": node.routeChanges
+			"Neighbors": isLR ? "N/A" : node.neighbors,
+			"Route Changes": isLR ? "N/A" : node.routeChanges
 		};
 		var dni = zwDevice.deviceNetworkId;
 		var label = zwDevice.displayName;
 		var hubDeviceId = zwDevice.id;
 
 		var deviceLink = hubDeviceId ? "/device/edit/" + hubDeviceId : "";
-
 		var deviceData = {
 			id: dni, // hexId
-			id2: node.nodeId, // intId
-			devIdDec: node.nodeId,
+			id2: nodeId, // intId
+			devIdDec: nodeId,
+			networkType: isLR ? "LR" : "Mesh",
 			metrics: statMap,
 			routers: routersForDisplay, // 	['0x06']
 			routersList: routersList, // list of routers (hex), not including hub; ['06']
@@ -748,7 +771,7 @@ function collectZwaveList(zwaveDetailsJson) {
 			deviceLink: deviceLink, // "/device/edit/2193"
 			hubDeviceId: hubDeviceId, // "2193"
 			deviceSecurity: node.security, // "None"
-			routeHtml: routersForDisplay.reduce( (acc, v, i) => (v == 'DIRECT') ? v : acc + ` ->\${v}`, "") + (routersForDisplay[0] == 'DIRECT' ? '' : ` -> \${useHex() ? "0x" + dni : node.nodeId}`) ,
+			routeHtml: routersForDisplay.reduce( (acc, v, i) => (v == 'DIRECT') ? v : acc + ` ->\${v}`, "") + (routersForDisplay[0] == 'DIRECT' ? '' : ` -> \${useHex() ? "0x" + dni : nodeId}`) ,
 			deviceStatus: node.nodeState,
 			connection: connectionSpeed,
 			// commandClasses: node.commandClass,
@@ -756,14 +779,15 @@ function collectZwaveList(zwaveDetailsJson) {
 			zwDevice: zwDevice
 		}
 		return deviceData;
-	});
+	}).filter(value => value !== null);
 
 }
 
 function getZWDevicePlaceholder(node) {
 	var zwDevice = {
 		"deviceNetworkId": node.nodeId.toString(16).toUpperCase(),
-		"isPlaceholder": true
+		"isPlaceholder": true,
+		"displayName": "NO DEVICE"
 	}
 	return zwDevice;
 }
@@ -886,7 +910,8 @@ function serializeToURL( obj ) {
 
 
 function translateDeviceType(deviceType) {
-	switch (deviceType) {
+	var type = deviceType.replace(" ","_");
+	switch (type) {
 		case "BASIC_TYPE_CONTROLLER": // 0x00
 			return "Basic Controler"
 		case "BASIC_TYPE_STATIC_CONTROLLER": // 0x03
@@ -1034,11 +1059,11 @@ function translateDeviceType(deviceType) {
 			return "Gateway"
 
 		case "GENERIC_TYPE_SWITCH_BINARY": // 0x10
-			return "Switch Binary"
+			return "Switch On/Off"
 		case "SPECIFIC_TYPE_POWER_SWITCH_BINARY":
-			return "Power Switch Binary"
+			return "Power Switch On/Off"
 		case "SPECIFIC_TYPE_SCENE_SWITCH_BINARY":
-			return "Scene Switch Binary"
+			return "Scene Switch"
 		case "SPECIFIC_TYPE_POWER_STRIP":
 			return "Power Strip"
 		case "SPECIFIC_TYPE_SIREN":
@@ -1046,12 +1071,12 @@ function translateDeviceType(deviceType) {
 		case "SPECIFIC_TYPE_VALVE_OPEN_CLOSE":
 			return "Valve Open/Close"
 		case "SPECIFIC_TYPE_COLOR_TUNABLE_BINARY":
-			return "Binary Tunable Color Light"
+			return "On/Off Color Light"
 		case "SPECIFIC_TYPE_IRRIGATION_CONTROLLER":
 			return "Irrigation Controller"
 
 		case "GENERIC_TYPE_SWITCH_MULTILEVEL": // 0x11
-			return "Switch Multilevel"
+			return "Dimmer Switch"
 		case "SPECIFIC_TYPE_CLASS_A_MOTOR_CONTROL":
 			return "Class A Motor Control"
 		case "SPECIFIC_TYPE_CLASS_B_MOTOR_CONTROL":
@@ -1061,13 +1086,13 @@ function translateDeviceType(deviceType) {
 		case "SPECIFIC_TYPE_MOTOR_MULTIPOSITION":
 			return "Motor Multiposition"
 		case "SPECIFIC_TYPE_POWER_SWITCH_MULTILEVEL":
-			return "Power Switch Multilevel"
+			return "Dimmer Switch"
 		case "SPECIFIC_TYPE_SCENE_SWITCH_MULTILEVEL":
 			return "Scene Switch Multilevel"
 		case "SPECIFIC_TYPE_FAN_SWITCH":
 			return "Fan Switch"
 		case "SPECIFIC_TYPE_COLOR_TUNABLE_MULTILEVEL":
-			return "Multilevel Tunable Color Light"
+			return "Dimmable Color Light"
 
 		case "GENERIC_TYPE_SWITCH_REMOTE": // 0x12
 			return "Switch Remote"
@@ -1081,11 +1106,11 @@ function translateDeviceType(deviceType) {
 			return "Switch Remote Toggle Multilevel"
 
 		case "GENERIC_TYPE_SWITCH_TOGGLE": // 0x13
-			return "Switch Toggle"
+			return "On/Off Switch"
 		case "SPECIFIC_TYPE_SWITCH_TOGGLE_BINARY":
-			return "Switch Toggle Binary"
+			return "On/Off Switch"
 		case "SPECIFIC_TYPE_SWITCH_TOGGLE_MULTILEVEL":
-			return "Switch Toggle Multilevel"
+			return "On/Off Dimmable Switch"
 
 		case "GENERIC_TYPE_THERMOSTAT": // 0x08
 			return "Thermostat"
@@ -1357,6 +1382,9 @@ function getDeviceDetails() {
 async function getData() {
 
 	var devList = await getZwaveList()
+	if ($enableDebug) {
+		console.log(`getData: Found \${devList.length} devices from getZwaveList`)
+	}
 
 	var fullNameMap = devList.reduce( (acc,val) => {
 						 acc[useHex() ? `0x\${val.id}` : val.id2]= `\${useHex() ? `0x\${val.id}` : val.id2} - \${val.label}`;
@@ -1481,6 +1509,14 @@ function findDeviceByDecId(devId) {
 }
 
 function findDeviceByHexId(devId) {
+	var origId = devId;
+	// Hex id in the table should be length 2 for mesh devices and length 4 for LR devices, so normalize this
+	if (devId.length == 4 && devId.startsWith("00")) { devId = devId.slice(2)}
+	if (devId.length == 3) { devId = `0\${devId}`}
+
+	if ($enableDebug && (devId != origId)) {
+		console.log(`findDeviceByHexId: translated \${origId} to \${devId}`)
+	}
 	return tableContent.find( row => row.id == devId)
 }
 
@@ -1799,8 +1835,8 @@ function getTopologyModal() {
 			\$("#zwave-topology-table").html(result);
 			topologyDialog.showModal();
 			// Insert tooltips
-			var topr = \$('#topologyDialog table tbody tr:nth-child(1) td:nth-child(n+2)')
-			var c1 = \$('#topologyDialog table tbody tr:nth-child(n+1) td:nth-child(1)')
+			var topr = \$('#topologyDialog table tr:nth-child(1) td:nth-child(n+2)')
+			var c1 = \$('#topologyDialog table tr:nth-child(n+1) td:nth-child(1)')
 			
 			var deviceHexIds = topr.map( function() { return this.innerHTML})
 			var deviceLabels = deviceHexIds.map( (i,o) => { if (o === '01') {return "HUB" } else return findDeviceByHexId(o).label })
@@ -1808,7 +1844,7 @@ function getTopologyModal() {
 			labelTopologyHeads(topr, "tooltiptexttop")
 			labelTopologyHeads(c1, "tooltiptextright")
 
-			var tRows = \$('#topologyDialog table tbody tr:nth-child(n+2)')
+			var tRows = \$('#topologyDialog table tr:nth-child(n+2)')
 			tRows.each ( (i,row) => {
 				labelTopologyCells(i,\$(row),deviceLabels, "tooltiptexttop")
 			})
@@ -1921,7 +1957,7 @@ if ( "${settings?.embedStyle}" != 'inline') {
 }
 
 function searchPanesList() {
-	var panes = ['Repeater', 'Status', 'Security', 'Connection Speed', 'RTT Avg', 'RTT StdDev', 'LWR RSSI', 'Device Type', 'Manufacturer']
+	var panes = ['Network Type', 'Repeater', 'Status', 'Security', 'Connection Speed', 'RTT Avg', 'RTT StdDev', 'LWR RSSI', 'Device Type', 'Manufacturer']
 	if (hasDeviceAccess) {
 		panes.push('listening')
 		panes.push('Beaming')
@@ -1954,9 +1990,9 @@ function doWork() {
 					data: tableContent,
 					rowId: 'id2',
 					stateSave: ${settings?.stateSave},
-					order: [[1,'asc']],
+					order: [[2,'asc']],
 					columns: [
-						//{ data: 'networkType', title: 'Type', searchPanes: { preSelect:['ZWAVE','ZIGBEE']} },
+						{ data: 'networkType', title: 'Network Type', visible: false, searchPanes: {controls: false} },
 						{
 							"className": 'details-control',
 							"orderable": false,
@@ -1965,6 +2001,9 @@ function doWork() {
 						},
 						{ data: useHex() ? 'id' : 'id2', title: 'Node',
 							render: function(data, type, row) {
+								if (type === 'sort') {
+									return row.id2
+								}
 								return useHex() ? `0x\${data}` : data
 							},
 						},
@@ -2121,7 +2160,7 @@ function doWork() {
 						},
 						{data: 'routerOf', title: "RoutingFor<br/>Count", defaultContent: 0,
 							visible: ${settings?.addCols?.contains("routingCount")},
-							render:function(data, type, row) { return data ? data.length : 0 }
+							render:function(data, type, row) { return row.networkType == "LR" ? "N/A" : data ? data.length : 0 }
 						},
 						{ data: 'metrics.Neighbors', title: 'Neighbor<br/>Count', defaultContent: "n/a",
 							searchPanes: {show: false},
