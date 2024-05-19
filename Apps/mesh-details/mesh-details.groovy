@@ -22,7 +22,7 @@ definition(
 
 
 /**********************************************************************************************************************************************/
-private releaseVer() { return "0.8.27.3-beta" }
+private releaseVer() { return "0.8.27.4-beta" }
 private appVerDate() { return "2024-05-19" }
 /**********************************************************************************************************************************************/
 preferences {
@@ -1650,10 +1650,14 @@ async function displayRowDetail(row) {
 				html += `\${neighborId} - HUB`
 			} else {
 				var deviceData = findDeviceByDecId(neighborId)
-				html += useHex() ? `0x\${deviceData.id}` : deviceData.id2
-				html += ` - \${deviceData.label}`
-				if (nonRepeaters.has(deviceData.id2.toString())) {
-					html += '<sup style="vertical-align:text-top;">*</sup>'
+				if (deviceData) {
+					html += useHex() ? `0x\${deviceData.id}` : deviceData.id2
+					html += ` - \${deviceData.label}`
+					if (nonRepeaters.has(deviceData.id2.toString())) {
+						html += '<sup style="vertical-align:text-top;">*</sup>'
+					}
+				} else if (neighborId > 0) {
+					html += `Unknown Neighbor (\${neighborId})`
 				}
 				// TODO: If neighborId is a router
 			}
