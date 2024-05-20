@@ -22,7 +22,7 @@ definition(
 
 
 /**********************************************************************************************************************************************/
-private releaseVer() { return "0.8.27.4-beta" }
+private releaseVer() { return "0.8.27.5-beta" }
 private appVerDate() { return "2024-05-19" }
 /**********************************************************************************************************************************************/
 preferences {
@@ -213,9 +213,9 @@ private def getAddColsInput() {
 	if (settings?.permitDeviceAccess) {
 		colOptions.put("lastActive", "Last Active Time")
 		colOptions.put("beaming", "Is Beaming?")
-		colOptions.put("listening", "Is Listening?")
 		colOptions.put("zwaveplus", "Is Z-Wave Plus?")
 	}
+	colOptions.put("listening", "Is Listening?")
 	input "addCols", "enum", title: "Additional Columns", description: inputDesc,  multiple: true, options: colOptions, submitOnChange: true
 }
 
@@ -279,35 +279,41 @@ def collectDevicesData() {
 	def results = [:]
 	results = deviceList.inject([:], { r, dev -> 
 			def id = dev.id
+			def dni = dev.getDeviceNetworkId()
+			def dniValue = -1
+			if (dni && dni.length() <= 4 && dni.matches("\\p{XDigit}{${dni.length()}}")) {
+				dniValue = Long.parseLong(dni, 16);
+			}
+			def isLR = dniValue > 255 ? true : false
 			def lastActiveStrUTC = dev.getLastActivity()
 			def lastActiveTS = lastActiveStrUTC ? Date.parse("yyy-MM-dd HH:mm:ssZ","$lastActiveStrUTC".replace("+00:00","+0000")).getTime() : null;
 			
 			SimpleDateFormat sdf= new SimpleDateFormat("yyyy-MM-dd HH:mm:ss")
 			def lastActiveStrLocal = lastActiveStrUTC ? sdf.format(lastActiveTS) : "Never"
 			def zwaveData = dev.getDataValue("zwNodeInfo")
-			if (!zwaveData) {
-				log.warn("${dev.getDisplayName()} has no zwNodeInfo. (Not a z-wave device?)")
+			if (!zwaveData && !isLR) {
+				log.info("${dev.getDisplayName()} has no zwNodeInfo; some data will not be available. (New device or Not a z-wave device?)")
 				return r;
 			}
 			def inCC = dev.getDataValue("inClusters")
 			def inCCSec = dev.getDataValue("secureInClusters")
 
-			def zwaveBytes = zwaveData.split(" ")
-			def zwaveDataLen = zwaveBytes.length
+			def zwaveBytes = zwaveData ? zwaveData.split(" ") : []
+			def zwaveDataLen = zwaveData ? zwaveBytes.length : 0
 
 			def nifBytes = []
 			def listening = false
 			def routing = false
 			def maxSpeed = -1
 			def speedBits = "?"
-			def rountingSlave = false
+			def routingSlave = false
 			def flirs250 = false
 			def flirs10000 = false
 			def flirs = false
 			def extraSpeed
 			def inCCList = []
 			def inCCSecList = []
-			def zwavePlus = false
+			def zwavePlus = isLR ? "yes" : "no"
 			if (zwaveDataLen > 0) {
 				def rawBytes = EncodingGroovyMethods.decodeHex(zwaveBytes.join())
 				nifBytes = rawBytes.collect {it -> String.format("%8s", Integer.toBinaryString(it & 0xFF)).replace(" ", "0") }
@@ -340,6 +346,7 @@ def collectDevicesData() {
 			r.put(id, [
 				name: dev.getDisplayName(),
 				//data: dev.getData(),
+				isLR: isLR,
 				listening: listening,
 				beaming: beaming,
 				routing: routing,
@@ -752,6 +759,10 @@ function collectZwaveList(zwaveDetailsJson) {
 			"Neighbors": isLR ? "N/A" : node.neighbors,
 			"Route Changes": isLR ? "N/A" : node.routeChanges
 		};
+
+		var isListening = node.listening ? "yes" : "no";
+		var isFlirs = node.beaming ? "yes" : "no"; // as of 2.3.8, Node details uses "beaming: true" for FLiRS capable devices (and has listening: true)
+
 		var dni = zwDevice.deviceNetworkId;
 		var label = zwDevice.displayName;
 		var hubDeviceId = zwDevice.id;
@@ -774,7 +785,9 @@ function collectZwaveList(zwaveDetailsJson) {
 			routeHtml: routersForDisplay.reduce( (acc, v, i) => (v == 'DIRECT') ? v : acc + ` ->\${v}`, "") + (routersForDisplay[0] == 'DIRECT' ? '' : ` -> \${useHex() ? "0x" + dni : nodeId}`) ,
 			deviceStatus: node.nodeState,
 			connection: connectionSpeed,
-			// commandClasses: node.commandClass,
+			// commandClasses: node.commandClass, # Seeems to always be empty: 2.3.9
+			listening: isListening,
+			flirs: isFlirs,
 			zwNode: node,
 			zwDevice: zwDevice
 		}
@@ -1726,7 +1739,7 @@ async function displayRowDetail(row) {
 			html += pretty.replace(/JSONS/g, '&nbsp;&nbsp;')
 			html += '</pre></div>'
 		} else {
-			html += '<div hidden="true" class="debug-content"><span>Device Detail</span><pre>NO DATA - no auth or not zwave?</pre></div>'
+			html += '<div hidden="true" class="debug-content"><span>Device Detail</span><pre>No Data - no auth or not zwave?</pre></div>'
 		}
 	}
 
@@ -1962,10 +1975,10 @@ if ( "${settings?.embedStyle}" != 'inline') {
 
 function searchPanesList() {
 	var panes = ['Network Type', 'Repeater', 'Status', 'Security', 'Connection Speed', 'RTT Avg', 'RTT StdDev', 'LWR RSSI', 'Device Type', 'Manufacturer']
+	panes.push('Listening')
+	panes.push('FLiRS')
 	if (hasDeviceAccess) {
-		panes.push('listening')
 		panes.push('Beaming')
-		panes.push('FLiRS')
 		panes.push('Z-Wave Plus')
 	}
 	return panes
@@ -2192,7 +2205,7 @@ function doWork() {
 							visible: ${settings?.addCols?.contains("security")}
 						},
 						{ data: 'routeHtml', title: 'Route<br/>(from&nbsp;Hub)', searchPanes: { show: false }},
-						{ data: 'devDetail.lastActiveTS', title: "Last Activity", defaultContent: "NO DATA", 
+						{ data: 'devDetail.lastActiveTS', title: "Last Activity", defaultContent: "unknown", 
 							visible: ${settings?.addCols?.contains("lastActive")},
 							searchPanes: { show: false },
 							render: function(data, type, row) {
@@ -2209,23 +2222,19 @@ function doWork() {
 								}
 							}
 						},
-						{ data: 'devDetail.listening', title: "Listening", defaultContent: "NO DATA",
+						{ data: 'listening', title: "Listening", defaultContent: "unknown",
 							visible: ${settings?.addCols?.contains("listening")},
-							searchPanes: {
-								name: "listening",
-								show: hasDeviceAccess() ? undefined : false,
-								controls: false
-							}
+							searchPanes: { controls: false}
 						},
-						{ data: 'devDetail.beaming', title: "Beaming", defaultContent: "NO DATA",
+						{ data: 'devDetail.beaming', title: "Beaming", defaultContent: "unknown",
 							visible: ${settings?.addCols?.contains("beaming")},
 							searchPanes: { show: hasDeviceAccess() ? undefined : false, controls: false}
 						},
-						{ data: 'devDetail.flirs', title: "FLiRS", defaultContent: "NO DATA",
+						{ data: 'flirs', title: "FLiRS", defaultContent: "unknown",
 							visible: ${settings?.addCols?.contains("flirs")},
-							searchPanes: { show: hasDeviceAccess() ? undefined : false, controls: false}
+							searchPanes: { controls: false}
 						},
-						{ data: 'devDetail.zwavePlus', title: "Z-Wave Plus", defaultContent: "NO DATA",
+						{ data: 'devDetail.zwavePlus', title: "Z-Wave Plus", defaultContent: "unknown",
 							visible: ${settings?.addCols?.contains("zwaveplus")},
 							searchPanes: { show: hasDeviceAccess() ? undefined : false, controls: false}
 						},
